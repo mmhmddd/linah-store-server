@@ -20,8 +20,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
@@ -49,17 +48,18 @@ app.use(
   })
 );
 
-// Logging & Timeout
+// Logging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// Timeout
 app.use((req, res, next) => {
   res.setTimeout(10000, () => {
     console.error(`Timeout: ${req.method} ${req.url}`);
     res.status(408).json({ message: 'Request timed out' });
   });
-  next();
-});
-
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
@@ -69,28 +69,27 @@ connectDB().catch(err => {
   process.exit(1);
 });
 
-// Static Files
+// Static Uploads
 app.use('/uploads', express.static(path.join(__dirname, 'Uploads')));
 
 // Body Parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/orders', orderRoutes);
 
-// Serve Frontend (Production Only)
+// === Serve Frontend (Production) ===
 if (isProd) {
   const clientPath = path.join(__dirname, 'client', 'dist', 'linah-store');
-
   app.use(express.static(clientPath));
 
-  // صحيح: استخدم app.use لـ SPA
-  app.use('*', (req, res, next) => {
+  // صحيح: app.all لـ SPA
+  app.all('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
     res.sendFile(path.join(clientPath, 'index.html'));
   });
@@ -101,12 +100,20 @@ app.get('/', (req, res) => {
   res.send('LinaStore API is alive');
 });
 
-// 404 Handler
-app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+// === 404 for API Routes Only ===
+app.all('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ message: 'Route not found' });
+  }
+  // للـ SPA، لا تُرسل 404
+  if (isProd) {
+    const clientPath = path.join(__dirname, 'client', 'dist', 'linah-store');
+    return res.sendFile(path.join(clientPath, 'index.html'));
+  }
+  res.status(404).send('Not found');
 });
 
-// Error Handler
+// === Global Error Handler ===
 app.use((err, req, res, next) => {
   console.error('Server error:', err.stack);
   res.status(err.status || 500).json({
@@ -114,7 +121,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start Server
+// === Start Server ===
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} (${isProd ? 'PROD' : 'DEV'})`);

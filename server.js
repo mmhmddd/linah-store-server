@@ -12,6 +12,7 @@ const path = require('path');
 
 const app = express();
 
+// === CORS ===
 const allowedOrigins = [
   'https://linah-store.vercel.app',
   'http://localhost:4200'
@@ -34,6 +35,7 @@ app.use(
 
 const isProd = process.env.NODE_ENV === 'production';
 
+// === Session ===
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-prod',
@@ -48,13 +50,12 @@ app.use(
   })
 );
 
-// Logging
+// === Logging & Timeout ===
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Timeout
 app.use((req, res, next) => {
   res.setTimeout(10000, () => {
     console.error(`Timeout: ${req.method} ${req.url}`);
@@ -63,20 +64,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Database
+// === Database ===
 connectDB().catch(err => {
   console.error('MongoDB connection error:', err);
   process.exit(1);
 });
 
-// Static Uploads
+// === Static Uploads ===
 app.use('/uploads', express.static(path.join(__dirname, 'Uploads')));
 
-// Body Parsers
+// === Body Parsers ===
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
+// === API Routes ===
 app.use('/api/auth', authRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/cart', cartRoutes);
@@ -87,31 +88,35 @@ app.use('/api/orders', orderRoutes);
 if (isProd) {
   const clientPath = path.join(__dirname, 'client', 'dist', 'linah-store');
   app.use(express.static(clientPath));
-
-  // صحيح: app.all لـ SPA
-  app.all('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(clientPath, 'index.html'));
-  });
 }
 
-// Health Check
+// === Health Check ===
 app.get('/', (req, res) => {
   res.send('LinaStore API is alive');
 });
 
-// === 404 for API Routes Only ===
-app.all('*', (req, res) => {
-  if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ message: 'Route not found' });
-  }
-  // للـ SPA، لا تُرسل 404
-  if (isProd) {
+// === SPA + 404 Catch-All Router ===
+const catchAllRouter = express.Router();
+
+// 1. Serve index.html for SPA (non-API routes)
+catchAllRouter.use((req, res, next) => {
+  if (isProd && !req.path.startsWith('/api/')) {
     const clientPath = path.join(__dirname, 'client', 'dist', 'linah-store');
     return res.sendFile(path.join(clientPath, 'index.html'));
   }
+  next();
+});
+
+// 2. 404 for API routes
+catchAllRouter.use((req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ message: 'Route not found' });
+  }
   res.status(404).send('Not found');
 });
+
+// === Register Catch-All Router ===
+app.use(catchAllRouter);
 
 // === Global Error Handler ===
 app.use((err, req, res, next) => {
